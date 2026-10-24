@@ -105,6 +105,8 @@ static restored_error_t restored_error(property_list_service_error_t err)
                         return RESTORE_E_MUX_ERROR;
                 case PROPERTY_LIST_SERVICE_E_RECEIVE_TIMEOUT:
                         return RESTORE_E_RECEIVE_TIMEOUT;
+                case PROPERTY_LIST_SERVICE_E_NOT_ENOUGH_DATA:
+                        return RESTORE_E_NOT_ENOUGH_DATA;
                 default:
                         break;
         }

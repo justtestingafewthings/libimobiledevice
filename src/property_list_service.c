@@ -191,23 +191,39 @@ static property_list_service_error_t internal_plist_receive_timeout(property_lis
 	}
 
 	*plist = NULL;
-	service_error_t serr = service_receive_with_timeout(client->parent, (char*)&pktlen, sizeof(pktlen), &bytes, timeout);
-	if (serr != SERVICE_E_SUCCESS) {
-		debug_info("initial read failed!");
-		return service_to_property_list_service_error(serr);
+	service_error_t serr = SERVICE_E_SUCCESS;
+	uint32_t header_bytes = 0;
+	while (header_bytes < sizeof(pktlen)) {
+		bytes = 0;
+		serr = service_receive_with_timeout(client->parent, (char*)&pktlen+header_bytes,
+			sizeof(pktlen)-header_bytes, &bytes, timeout);
+		if (serr == SERVICE_E_TIMEOUT && !header_bytes && !bytes) {
+			return PROPERTY_LIST_SERVICE_E_RECEIVE_TIMEOUT;
+		}
+		if (serr != SERVICE_E_SUCCESS && serr != SERVICE_E_TIMEOUT) {
+			debug_info("header receive failed: service error %d, received %u of %zu bytes",
+				serr, header_bytes, sizeof(pktlen));
+			return service_to_property_list_service_error(serr);
+		}
+		if (!bytes || bytes > sizeof(pktlen)-header_bytes) {
+			debug_info("incomplete header: received %u of %zu bytes", header_bytes, sizeof(pktlen));
+			/* A partial header makes retrying unsafe. */
+			return header_bytes ? PROPERTY_LIST_SERVICE_E_NOT_ENOUGH_DATA :
+				PROPERTY_LIST_SERVICE_E_MUX_ERROR;
+		}
+		header_bytes += bytes;
 	}
 
-	if (bytes == 0) {
-		/* success but 0 bytes length, assume timeout */
-		return PROPERTY_LIST_SERVICE_E_RECEIVE_TIMEOUT;
-	}
-
-	debug_info("initial read=%i", bytes);
+	debug_info("initial read=%u", header_bytes);
 
 	uint32_t curlen = 0;
 	char *content = NULL;
 
 	pktlen = be32toh(pktlen);
+	if (!pktlen) {
+		debug_info("received an empty frame");
+		return PROPERTY_LIST_SERVICE_E_PLIST_ERROR;
+	}
 	debug_info("%d bytes following", pktlen);
 	content = (char*)malloc(pktlen);
 	if (!content) {
@@ -216,9 +232,16 @@ static property_list_service_error_t internal_plist_receive_timeout(property_lis
 	}
 
 	while (curlen < pktlen) {
+		bytes = 0;
 		serr = service_receive(client->parent, content+curlen, pktlen-curlen, &bytes);
-		if (serr != SERVICE_E_SUCCESS) {
+		if (serr != SERVICE_E_SUCCESS && serr != SERVICE_E_TIMEOUT) {
+			debug_info("body receive failed: service error %d, received %u of %u bytes",
+				serr, curlen, pktlen);
 			res = service_to_property_list_service_error(serr);
+			break;
+		}
+		if (!bytes || bytes > pktlen-curlen) {
+			res = PROPERTY_LIST_SERVICE_E_NOT_ENOUGH_DATA;
 			break;
 		}
 		debug_info("received %d bytes", bytes);

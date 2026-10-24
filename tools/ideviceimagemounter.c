@@ -269,9 +269,17 @@ int main(int argc, char **argv)
 	}
 
 	unsigned int device_version = idevice_get_device_version(device);
+	uint8_t is_watch = 0;
+	plist_t device_class_node = NULL;
+	if (lockdownd_get_value(lckd, NULL, "DeviceClass", &device_class_node) == LOCKDOWN_E_SUCCESS) {
+		const char *device_class = plist_get_string_ptr(device_class_node, NULL);
+		is_watch = (device_class && !strcmp(device_class, "Watch"));
+	}
+	plist_free(device_class_node);
 
 	disk_image_upload_type_t disk_image_upload_type = DISK_IMAGE_UPLOAD_TYPE_AFC;
-	if (device_version >= IDEVICE_DEVICE_VERSION(7,0,0)) {
+	/* The iOS 7 cutoff does not apply to watchOS. */
+	if (is_watch || device_version >= IDEVICE_DEVICE_VERSION(7,0,0)) {
 		disk_image_upload_type = DISK_IMAGE_UPLOAD_TYPE_UPLOAD_IMAGE;
 	}
 
@@ -575,7 +583,9 @@ int main(int argc, char **argv)
 			goto leave;
 		}
 		char *mountname = NULL;
-		if (asprintf(&mountname, "%s/%s", PATH_PREFIX, targetname) < 0) {
+		const char *path_prefix = (device_version < IDEVICE_DEVICE_VERSION(7,0,0))
+			? "/var/mobile/Media" : PATH_PREFIX;
+		if (asprintf(&mountname, "%s/%s", path_prefix, targetname) < 0) {
 			fprintf(stderr, "Out of memory!?\n");
 			goto leave;
 		}
@@ -623,7 +633,7 @@ int main(int argc, char **argv)
 						while (total < amount) {
 							written = 0;
 							if (afc_file_write(afc, af, buf + total, amount - total, &written) !=
-								AFC_E_SUCCESS) {
+								AFC_E_SUCCESS || !written || written > amount - total) {
 								fprintf(stderr, "AFC Write error!\n");
 								break;
 							}
@@ -640,7 +650,18 @@ int main(int argc, char **argv)
 				}
 				while (amount > 0);
 
-				afc_file_close(afc, af);
+				if (ferror(f)) {
+					fprintf(stderr, "Error reading image file '%s': %s\n", image_path, strerror(errno));
+					afc_file_close(afc, af);
+					fclose(f);
+					goto leave;
+				}
+				if (afc_file_close(afc, af) != AFC_E_SUCCESS) {
+					fprintf(stderr, "afc_file_close on '%s' failed!\n", targetname);
+					fclose(f);
+					goto leave;
+				}
+				err = MOBILE_IMAGE_MOUNTER_E_SUCCESS;
 				break;
 		}
 
