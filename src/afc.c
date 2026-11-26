@@ -37,6 +37,13 @@
 #include "common/debug.h"
 #include "endianness.h"
 
+static size_t afc_strnlen(const char *text, size_t limit)
+{
+	size_t length = 0;
+	while (length < limit && text[length]) length++;
+	return length;
+}
+
 /**
  * Locks an AFC client, done for thread safety stuff
  *
@@ -461,7 +468,7 @@ static plist_t *make_dictionary(char *tokens, size_t length)
 	dict = plist_new_dict();
 
 	while (j < length) {
-		size_t key_len = strnlen(tokens + j, length - j);
+		size_t key_len = afc_strnlen(tokens + j, length - j);
 		if (j + key_len >= length) {
 			plist_free(dict);
 			return NULL;
@@ -474,7 +481,7 @@ static plist_t *make_dictionary(char *tokens, size_t length)
 			return NULL;
 		}
 
-		size_t val_len = strnlen(tokens + j, length - j);
+		size_t val_len = afc_strnlen(tokens + j, length - j);
 		if (j + val_len >= length) {
 			plist_free(dict);
 			return NULL;
